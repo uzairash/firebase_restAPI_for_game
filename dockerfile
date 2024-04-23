@@ -2,13 +2,16 @@
 FROM node:latest
 
 # Set the working directory inside the container
-WORKDIR /
+WORKDIR /usr/src/app
 
 # Copy package.json and package-lock.json to the working directory
 COPY package*.json ./
 
 # Install project dependencies
-#RUN npm install
+RUN npm install
+
+# Install Firebase CLI
+RUN npm install -g firebase-tools
 
 # Copy the rest of the application code
 COPY . .
