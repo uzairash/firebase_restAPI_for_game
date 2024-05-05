@@ -6,6 +6,7 @@ const app = express();
 app.use(cors({origin: true}));
 
 const serviceAccount = require("./permissions.json");
+// const { DocumentReference } = require("firebase-admin/firestore");
 // const {log} = require("firebase-functions/logger");
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -19,17 +20,25 @@ app.get("/hello-world", (req, res) => {
   return res.status(200).send("Hello World!");
 });
 
-// Create(POST)
-app.post("/api/create", (req, res) => {
+// Create a subcollection with user name (POST)
+const houses = ["Spartans", "Titans", "Sentinels", "Warriors"];
+
+app.post("/api/create/:subcollectionName", (req, res) => {
   (async () => {
     try {
-      await db.collection("test_collection").doc(
-          db.collection("test_collection").doc().id)
-          .create({
-            name: req.body.name,
-            age: req.body.age,
-            university: req.body.university,
-          });
+      const randomHouseIndex = Math.floor(Math.random() * houses.length);
+      const house = houses[randomHouseIndex];
+      const data = {
+        house: house,
+        levels_score: [],
+        total_score: 0,
+        current_level: 1,
+      };
+
+      const subcollectionName = req.params.subcollectionName;
+
+      await db.collection("users").
+          doc(subcollectionName).create(data);
 
       return res.status(200).send();
     } catch (error) {
@@ -67,6 +76,65 @@ app.get("/api/users/:id", async (req, res) => {
   }
 });
 
+// Get all public user profile data
+// (carefully consider security implications)
+app.get("/api/users/", async (req, res) => {
+  try {
+    const users = [];
+    const snapshot = await db.collection("users").get();
+
+    for (const doc of snapshot.docs) {
+      const userId = doc.id;
+      const userData = doc.data();
+
+      // Optionally add a filter for specific public user fields:
+      // const publicUserData = {
+      //   name: userData.name,
+      //   // Include other public fields as needed
+      // };
+
+      users.push({userId, ...userData});
+    }
+
+    return res.status(200).send(users);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).send(error);
+  }
+});
+// leader board
+app.get("/api/leaderboard", async (req, res) => {
+  try {
+    const snapshot = await db.collection("users").get();
+
+    // Extract necessary data and sort users based on total score
+    const usersData = [];
+    snapshot.forEach((doc) => {
+      const userData = doc.data();
+      usersData.push({userId: doc.id, ...userData});
+    });
+
+    // Sort users based on total score in descending order
+    const sortedUsers = usersData.sort((a, b) => b.total_score - a.total_score);
+
+    // Extract only necessary fields (username, house, and total score)
+    const leaderboardData = sortedUsers.map((user) => ({
+      username: user.userId,
+      house: user.house,
+      total_score: user.total_score,
+    }));
+
+    // Wrap leaderboard data inside a "players" array
+    const formattedLeaderboard = {players: leaderboardData};
+
+    return res.status(200).send(formattedLeaderboard);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).send(error);
+  }
+});
+
+
 // Get a specific lecture's data based on id
 app.get("/api/lecture/:id", async (req, res) => {
   try {
@@ -80,20 +148,71 @@ app.get("/api/lecture/:id", async (req, res) => {
     return res.status(500).send(error);
   }
 });
+
 // Get all quiz data
 app.get("/api/quiz/", async (req, res) => {
   try {
-    const collectionRef = db.collection("/Quiz/");
+    console.log("here");
+    const collectionRef = db.collection("Quiz");
     const snapshot = await collectionRef.get();
     const allDocuments = [];
-    snapshot.forEach((doc) => {
-      const documentCollection = doc.collection("questions");
-      const documentData = documentCollection.data();
-      console.log("documents data: ", documentData);
-      documentData.id = doc.id; // Add the document ID to the data
-      allDocuments.push(documentData);
-    });
+
+    // Loop through each Quiz document
+    for (const doc of snapshot.docs) {
+      const quizId = doc.id; // This is the quiz name (e.g., quiz_1, quiz_2)
+      const quizData = doc.data();
+
+      const questionsRef = db.collection("Quiz").
+          doc(quizId).collection("questions");
+      const questionsSnapshot = await questionsRef.get();
+
+      // Extract data and create a new object for each quiz's questions
+      const questionsData = questionsSnapshot.docs.map((subDoc) => ({
+        id: subDoc.id,
+        ...subDoc.data(), // Spread operator to include subDoc data
+      }));
+
+      // Combine Quiz data with questions data, including quiz name
+      allDocuments.push({quizName: quizId, ...quizData,
+        questions: questionsData});
+    }
+
     return res.status(200).send(allDocuments);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).send(error);
+  }
+});
+
+// Get specific quiz data
+app.get("/api/quiz/:quizName", async (req, res) => {
+  try {
+    const quizName = req.params.quizName; // Get quiz name from URL parameter
+
+    // Get reference to the Quiz document
+    const quizRef = db.collection("Quiz").doc(quizName);
+    const quizSnapshot = await quizRef.get();
+
+    // Check if Quiz document exists
+    if (!quizSnapshot.exists) {
+      return res.status(404).send("Quiz not found");
+    }
+
+    const quizData = quizSnapshot.data();
+
+    // Get reference to the "questions" subcollection
+    const questionsRef = quizRef.collection("questions");
+    const questionsSnapshot = await questionsRef.get();
+
+    // Extract data from each document in the questions subcollection
+    const questionsData = questionsSnapshot.docs.map((subDoc) => ({
+      id: subDoc.id,
+      ...subDoc.data(), // Spread operator to include subDoc data
+    }));
+
+    // Combine Quiz data with questions data
+    const response = {quizName, ...quizData, questions: questionsData};
+    return res.status(200).send(response);
   } catch (error) {
     console.error(error);
     return res.status(500).send(error);
@@ -103,7 +222,7 @@ app.get("/api/quiz/", async (req, res) => {
 // Update a document (PUT)
 app.put("/api/update/:id", async (req, res) => {
   try {
-    const documentRef = db.collection("test_collection").doc(req.params.id);
+    const documentRef = db.collection("users").doc(req.params.id);
     await documentRef.update(req.body); // Update with data from request body
     return res.status(200).send("Document updated successfully");
   } catch (error) {
@@ -119,6 +238,43 @@ app.delete("/api/delete/:id", async (req, res) => {
     const documentRef = db.collection("test_collection").doc(req.params.id);
     await documentRef.delete();
     return res.status(200).send("Document deleted successfully");
+  } catch (error) {
+    console.error(error);
+    return res.status(500).send(error);
+  }
+});
+
+
+// Get houses total score in descending order
+app.get("/api/houses-score", async (req, res) => {
+  try {
+    // Initialize an empty object to store house data
+    const houses = {};
+
+    // Get all users' data
+    const snapshot = await db.collection("users").get();
+
+    // Loop through each user document
+    snapshot.forEach((doc) => {
+      const userData = doc.data();
+      const house = userData.house;
+      const totalScore = userData.total_score;
+
+      // Check if house exists in the object
+      if (!houses[house]) {
+        houses[house] = {house, houseScore: 0};
+      }
+
+      // Add user's total score to the house's total score
+      houses[house].houseScore += totalScore;
+    });
+
+    // Convert the houses object to an array and sort by houseScore (descending)
+    const housesArray = Object.values(houses).sort((a, b) =>
+      b.houseScore - a.houseScore);
+
+    // Return the sorted houses data in the desired format
+    return res.status(200).send({houses: housesArray});
   } catch (error) {
     console.error(error);
     return res.status(500).send(error);
