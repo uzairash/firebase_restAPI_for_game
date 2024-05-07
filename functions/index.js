@@ -1,3 +1,4 @@
+/* eslint-disable padded-blocks, require-jsdoc, no-inner-declarations */
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const express = require("express");
@@ -187,8 +188,7 @@ app.get("/api/quiz/", async (req, res) => {
 // Get specific quiz data
 app.get("/api/quiz/:quizName", async (req, res) => {
   try {
-    const quizName = req.params.quizName; // Get quiz name from URL parameter
-
+    const quizName = req.params.quizName;
     // Get reference to the Quiz document
     const quizRef = db.collection("Quiz").doc(quizName);
     const quizSnapshot = await quizRef.get();
@@ -207,17 +207,207 @@ app.get("/api/quiz/:quizName", async (req, res) => {
     // Extract data from each document in the questions subcollection
     const questionsData = questionsSnapshot.docs.map((subDoc) => ({
       id: subDoc.id,
-      ...subDoc.data(), // Spread operator to include subDoc data
+      ...subDoc.data(),
     }));
 
-    // Combine Quiz data with questions data
-    const response = {quizName, ...quizData, questions: questionsData};
+    // Select 10 random questions
+    const randomQuestions = questionsData
+        .sort(() => Math.random() - 0.5).slice(0, 10);
+
+    // Combine Quiz data with randomly selected questions
+    const response = {quizName, ...quizData, questions: randomQuestions};
     return res.status(200).send(response);
   } catch (error) {
     console.error(error);
     return res.status(500).send(error);
   }
 });
+
+
+// add pop up quiz
+app.post("/api/quiz/:quizName/questions", async (req, res) => {
+
+  try {
+    const quizName = req.params.quizName; // Get quiz name from URL parameter
+    const questionData = req.body; // Get question data (should be an array)
+
+    if (!Array.isArray(questionData)) {
+      return res.status(400)
+          .send("Invalid format Please provide an array of questions.");
+    }
+
+    // Get reference to the Quiz document
+    const quizRef = db.collection("Quiz").doc(quizName);
+    const quizSnapshot = await quizRef.get();
+
+    // Check if Quiz document exists
+    if (!quizSnapshot.exists) {
+      return res.status(404).send("Quiz not found");
+    }
+
+    // Get reference to the "questions" subcollection
+    const questionsRef = quizRef.collection("questions");
+
+    // Function to generate the next sequential question ID
+    async function getNextQuestionId() {
+      let highestQuestionNumber = 0;
+      const querySnapshot = await questionsRef.get();
+      querySnapshot.forEach((doc) => {
+        const idParts = doc.id.split("_");
+        const questionNumber = parseInt(idParts[1]);
+        highestQuestionNumber = Math.max(highestQuestionNumber, questionNumber);
+      });
+      return `q_${highestQuestionNumber + 1}`;
+    }
+
+    const errors = [];
+
+    // Loop through each question object in the array
+    for (const question of questionData) {
+      // Validate individual question data
+      if (!question.correct_opt || !question.opt_A ||
+          !question.opt_B || !question.opt_C ||
+           !question.opt_D || !question.text) {
+        errors.push("Missing required question data in one or more questions.");
+        continue; // Skip to the next iteration if there are errors
+      }
+
+      // Generate the next sequential question ID
+      const nextQuestionId = await getNextQuestionId();
+
+      // Add the question with the generated ID and question data
+      try {
+        await questionsRef.doc(nextQuestionId).set(question);
+      } catch (error) {
+        errors.push("Error adding question to database");
+      }
+    }
+
+    // Check if there are any errors
+    if (errors.length > 0) {
+      return res.status(400).send(errors);
+    }
+
+    // Return success message after adding all questions
+    const response = {message: "Questions added successfully"};
+    return res.status(201).send(response);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).send(error);
+  }
+});
+
+app.post("/api/normalquiz/:quizName/questions", async (req, res) => {
+
+  try {
+    const quizName = req.params.quizName; // Get quiz name from URL parameter
+    const questionData = req.body; // Get question data (should be an array)
+
+    if (!Array.isArray(questionData)) {
+      return res.status(400)
+          .send("Invalid format Please provide an array of questions.");
+    }
+
+    // Get reference to the Quiz document
+    const quizRef = db.collection("Quiz").doc(quizName);
+    const quizSnapshot = await quizRef.get();
+
+    // Check if Quiz document exists
+    if (!quizSnapshot.exists) {
+      return res.status(404).send("Quiz not found");
+    }
+
+    // Get reference to the "questions" subcollection
+    const questionsRef = quizRef.collection("questions");
+
+    // Function to generate the next sequential question ID
+    async function getNextQuestionId() {
+      let highestQuestionNumber = 0;
+      const querySnapshot = await questionsRef.get();
+      querySnapshot.forEach((doc) => {
+        const idParts = doc.id.split("_");
+        const questionNumber = parseInt(idParts[1]);
+        highestQuestionNumber = Math.max(highestQuestionNumber, questionNumber);
+      });
+      return `q_${highestQuestionNumber + 1}`;
+    }
+
+    const errors = [];
+
+    // Loop through each question object in the array
+    for (const question of questionData) {
+      // Validate individual question data
+      if (!question.correct_opt || !question.opt_A ||
+          !question.opt_B || !question.text) {
+        errors.push("Missing required question data in one or more questions.");
+        continue; // Skip to the next iteration if there are errors
+      }
+
+      // Generate the next sequential question ID
+      const nextQuestionId = await getNextQuestionId();
+
+      // Add the question with the generated ID and question data
+      try {
+        await questionsRef.doc(nextQuestionId).set(question);
+      } catch (error) {
+        errors.push("Error adding question to database");
+      }
+    }
+
+    // Check if there are any errors
+    if (errors.length > 0) {
+      return res.status(400).send(errors);
+    }
+
+    // Return success message after adding all questions
+    const response = {message: "Questions added successfully"};
+    return res.status(201).send(response);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).send(error);
+  }
+});
+
+// get random popupquiz
+app.get("/api/randomquiz/popupquiz", async (req, res) => {
+  try {
+    // Reference the "popupQuiz" document directly
+    const quizRef = db.collection("Quiz")
+        .doc("popupQuiz"); // Hardcoded quiz name
+    const quizSnapshot = await quizRef.get();
+
+    // Check if Quiz document exists
+    if (!quizSnapshot.exists) {
+      return res.status(404).send("Quiz not found");
+    }
+
+    const quizData = quizSnapshot.data();
+
+    // Reference and retrieve questions from "questions" subcollection
+    const questionsRef = quizRef.collection("questions");
+    const questionsSnapshot = await questionsRef.get();
+
+    // Extract data from each document
+    const questionsData = questionsSnapshot.docs.map((subDoc) => ({
+      id: subDoc.id,
+      ...subDoc.data(), // Spread operator to include subDoc data
+    }));
+
+    // Randomly select and return a single question
+    const randomIndex = Math.floor(Math.random() * questionsData.length);
+    const selectedQuestion = questionsData[randomIndex];
+
+    // Combine Quiz name with the selected question
+    const response = {quizName: "popupQuiz",
+      ...quizData, questions: [selectedQuestion]};
+
+    return res.status(200).send(response);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).send(error);
+  }
+});
+
 
 // Update a document (PUT)
 app.put("/api/update/:id", async (req, res) => {
